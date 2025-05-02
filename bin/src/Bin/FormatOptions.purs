@@ -24,6 +24,7 @@ type FormatOptions =
   , typeArrowPlacement :: TypeArrowOption
   , unicode :: UnicodeOption
   , width :: Maybe Int
+  , alignCaseArrows :: Boolean
   }
 
 defaults :: FormatOptions
@@ -36,6 +37,7 @@ defaults =
   , typeArrowPlacement: TypeArrowFirst
   , unicode: UnicodeSource
   , width: Nothing
+  , alignCaseArrows: false
   }
 
 formatOptions :: ArgParser FormatOptions
@@ -92,6 +94,10 @@ formatOptions =
           "The maximum width of the document in columns.\nDefaults to no maximum."
           # Arg.int
           # Arg.optional
+    , alignCaseArrows:
+        Arg.flag [ "--align-case-arrows", "-aca" ]
+          "Vertically aligns all the arrows from a case-clause"
+          # Arg.boolean
     }
 
 unicodeOption :: ArgParser UnicodeOption
@@ -120,6 +126,7 @@ fromJson json = do
   typeArrowPlacement <- traverse typeArrowPlacementFromString =<< obj .:? "typeArrowPlacement"
   unicode <- traverse unicodeFromString =<< obj .:? "unicode"
   width <- obj .:? "width"
+  alignCaseArrows <- obj .:? "alignCaseArrows"
   pure
     { importSort: fromMaybe defaults.importSort importSort
     , importWrap: fromMaybe defaults.importWrap importWrap
@@ -129,6 +136,7 @@ fromJson json = do
     , typeArrowPlacement: fromMaybe defaults.typeArrowPlacement typeArrowPlacement
     , unicode: fromMaybe defaults.unicode unicode
     , width: width <|> defaults.width
+    , alignCaseArrows: fromMaybe defaults.alignCaseArrows alignCaseArrows
     }
 
 toJson :: FormatOptions -> Json
@@ -142,6 +150,7 @@ toJson options =
     # extend (assoc "typeArrowPlacement" (typeArrowPlacementToString options.typeArrowPlacement))
     # extend (assoc "unicode" (unicodeToString options.unicode))
     # extend (assoc "width" (maybe jsonNull encodeJson options.width))
+    # extend (assoc "alignCaseArrows" options.alignCaseArrows)
 
 typeArrowPlacementFromString :: String -> Either JsonDecodeError TypeArrowOption
 typeArrowPlacementFromString = case _ of

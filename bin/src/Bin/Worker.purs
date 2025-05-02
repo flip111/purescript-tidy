@@ -30,6 +30,7 @@ import PureScript.CST.Parser.Monad (PositionedError)
 import Tidy (defaultFormatOptions, formatModule, toDoc)
 import Tidy.Operators (parseOperatorTable)
 import Tidy.Precedence (PrecedenceMap, remapOperators)
+import Debug
 
 type WorkerConfig =
   { importSort :: String
@@ -40,6 +41,7 @@ type WorkerConfig =
   , typeArrowPlacement :: String
   , unicode :: String
   , width :: Int
+  , alignCaseArrows :: Boolean
   }
 
 toWorkerConfig :: FormatOptions -> WorkerConfig
@@ -52,6 +54,7 @@ toWorkerConfig options =
   , typeArrowPlacement: FormatOptions.typeArrowPlacementToString options.typeArrowPlacement
   , unicode: FormatOptions.unicodeToString options.unicode
   , width: fromMaybe top options.width
+  , alignCaseArrows: options.alignCaseArrows
   }
 
 type WorkerData =
@@ -90,6 +93,7 @@ formatCommand args operators contents = do
           , operators = remapOperators operators ok
           , typeArrowPlacement = args.typeArrowPlacement
           , unicode = args.unicode
+          , alignCaseArrows = spy "args.alignCaseArrows" args.alignCaseArrows
           }
       Right $ print $ toDoc $ formatModule opts ok
     ParseSucceededWithErrors _ errs -> do
@@ -122,6 +126,7 @@ formatInPlaceCommand shouldCheck operators { filePath, config } = do
           fromRight' (\_ -> unsafeCrashWith "Unknown unicode value") do
             FormatOptions.unicodeFromString config.unicode
       , width: Just config.width
+      , alignCaseArrows: spy "config.alignCaseArrows" config.alignCaseArrows
       }
   contents <- FS.readTextFile UTF8 filePath
   start <- liftEffect hrtime

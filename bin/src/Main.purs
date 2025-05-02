@@ -59,6 +59,7 @@ import PureScript.CST.Types (Module(..), ModuleHeader(..), Name(..))
 import Tidy.Operators (parseOperatorTable, resolveOperatorExports)
 import Tidy.Operators.Defaults (defaultOperators)
 import Tidy.Precedence (OperatorNamespace(..), PrecedenceMap)
+import Debug
 
 data FormatMode = Check | Write
 
@@ -191,11 +192,11 @@ main = launchAff_ do
           filesWithOptions <- flip evalStateT Map.empty do
             for files \filePath -> do
               rcMap <- State.get
-              rcOptions <- State.state <<< const =<< lift (resolveRcForDir root rcMap (Path.dirname filePath))
-              options <- lift $ getOptions cliOptions rcOptions filePath configOption
+              rcOptions <- State.state <<< const =<< lift (resolveRcForDir (spy "root" root) rcMap (spy "filePath" $ Path.dirname filePath))
+              options <- lift $ getOptions (spy "cliOptions" cliOptions) (spy "rcOptions" rcOptions) filePath configOption
               pure
                 { filePath
-                , config: toWorkerConfig options
+                , config: toWorkerConfig (spy "outer options" options)
                 }
 
           operatorsByPath <-
@@ -267,10 +268,10 @@ main = launchAff_ do
           currentDir <- liftEffect Process.cwd
           let root = (Path.parse currentDir).root
           Tuple rcOptions _ <- resolveRcForDir root Map.empty currentDir
-          options <- getOptions cliOptions rcOptions "the current directory." configOption
+          options <- getOptions (spy "cliOptions" cliOptions) (spy "rcOptions" rcOptions) "the current directory." (spy "configOption" configOption)
           operators <- parseOperatorTable <<< fromMaybe defaultOperators <$> traverse readOperatorTable options.operatorsFile
           contents <- readStdin
-          case formatCommand options operators contents of
+          case formatCommand (spy "options" options) operators contents of
             Left err -> do
               Console.error err
               liftEffect $ Process.setExitCode 1
@@ -323,7 +324,8 @@ formatInPlaceOne { shouldCheck, operatorsByPath } input@{ config } = do
     operators =
       maybe Map.empty Lazy.force $ Object.lookup config.operatorsFile parsedOperatorsByPath
 
-  formatInPlaceCommand shouldCheck operators input
+  traceM "formatInPlaceOne"
+  formatInPlaceCommand shouldCheck operators (spy "input" input)
 
 type RcMap = Map FilePath (Maybe FormatOptions)
 
@@ -335,7 +337,7 @@ resolveRcForDir root = go List.Nil
     Just res ->
       pure $ unwind cache res paths
     Nothing -> do
-      let filePath = Path.concat [ dir, rcFileName ]
+      let filePath = spy "inner filepath" $ Path.concat [ dir, rcFileName ]
       contents <- try $ FS.readTextFile UTF8 filePath
       case contents of
         Left _
