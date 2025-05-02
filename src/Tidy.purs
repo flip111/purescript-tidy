@@ -21,7 +21,7 @@ import Prim hiding (Row, Type)
 import Data.Array as Array
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Array.NonEmpty as NonEmptyArray
-import Data.Foldable (foldMap, foldl, foldr, maximum)
+import Data.Foldable (foldMap, foldl, foldr)
 import Data.List.NonEmpty as NonEmptyList
 import Data.Map as Map
 import Data.Maybe (Maybe(..), isJust, maybe)
@@ -33,7 +33,7 @@ import Data.Tuple (Tuple(..), fst, snd)
 import Dodo as Dodo
 import Partial.Unsafe (unsafeCrashWith)
 import PureScript.CST.Errors (RecoveredError(..))
-import PureScript.CST.Types -- (AppSpine(..), Binder(..), ClassFundep(..), ClassHead, Comment(..), DataCtor(..), DataHead, DataMembers(..), Declaration(..), Delimited, DelimitedNonEmpty, DoStatement(..), Export(..), Expr(..), FixityOp(..), Foreign(..), Guarded(..), GuardedExpr(..), Ident, IfThenElse, Import(..), ImportDecl(..), Instance(..), InstanceBinding(..), InstanceHead, Label, Labeled(..), LetBinding(..), LineFeed, Module(..), ModuleBody(..), ModuleHeader(..), ModuleName, Name(..), OneOrDelimited(..), Operator, PatternGuard(..), Prefixed(..), Proper, QualifiedName(..), RecordLabeled(..), RecordUpdate(..), Row(..), Separated(..), SourceStyle(..), SourceToken, Token(..), Type(..), TypeVarBinding(..), ValueBindingFields, Where(..), Wrapped(..))
+import PureScript.CST.Types (AppSpine(..), Binder(..), CaseOf, ClassFundep(..), ClassHead, Comment(..), DataCtor(..), DataHead, DataMembers(..), Declaration(..), Delimited, DelimitedNonEmpty, DoStatement(..), Export(..), Expr(..), FixityOp(..), Foreign(..), Guarded(..), GuardedExpr(..), Ident, IfThenElse, Import(..), ImportDecl(..), Instance(..), InstanceBinding(..), InstanceHead, Label, Labeled(..), LetBinding(..), LineFeed, Module(..), ModuleBody(..), ModuleHeader(..), ModuleName, Name(..), OneOrDelimited(..), Operator, PatternGuard(..), Prefixed(..), Proper, QualifiedName(..), RecordLabeled(..), RecordUpdate(..), Row(..), Separated(..), SourceStyle(..), SourceToken, Token(..), Type(..), TypeVarBinding(..), ValueBindingFields, Where(..), Wrapped(..))
 import Tidy.Doc (FormatDoc(..), align, alignCurrentColumn, anchor, break, flexDoubleBreak, flexGroup, flexSoftBreak, flexSpaceBreak, forceMinSourceBreaks, fromDoc, indent, joinWith, joinWithMap, leadingBlockComment, leadingLineComment, locally, softBreak, softSpace, sourceBreak, space, spaceBreak, text, trailingBlockComment, trailingLineComment)
 import Tidy.Doc (FormatDoc, toDoc) as Exports
 import Tidy.Doc as Doc
@@ -44,7 +44,6 @@ import Tidy.Token (UnicodeOption(..)) as Exports
 import Tidy.Token (UnicodeOption(..), printToken)
 import Tidy.Util (nameOf, overLabel, splitLines, splitStringEscapeLines)
 import Data.String as String
-import Debug
 
 data TypeArrowOption
   = TypeArrowFirst
@@ -1005,11 +1004,8 @@ formatRecordUpdate conf = case _ of
     formatName conf n `flexSpaceBreak` indent do
       formatBasicListNonEmpty Grouped formatRecordUpdate conf upd
 
--- indent' :: forall a. FormatDoc a -> FormatDoc a
--- indent' (FormatDoc d) = FormatDoc (Dodo.indent d)
-
 formatCase :: forall e a. FormatHanging (CaseOf e) e a
-formatCase conf caseOf@{ keyword, head: Separated { head: exprHead, tail: exprTail }, "of": ofToken, branches } =
+formatCase conf { keyword, head: Separated { head: exprHead, tail: exprTail }, "of": ofToken, branches } =
   let
     caseHeadExprs :: FormatDoc a
     caseHeadExprs =
@@ -1046,29 +1042,21 @@ formatCase conf caseOf@{ keyword, head: Separated { head: exprHead, tail: exprTa
     formattedBranchesDoc =
       if conf.alignCaseArrows then
         -- Alignment logic using width calculation
-        trace "Aligning case arrows" \_ -> -- DEBUG: Indicate alignment path taken
           let
             -- Helper to split a case branch into LHS, Arrow, RHS components
             formatCaseBranchToLines :: Tuple (Separated (Binder e)) (Guarded e) -> NonEmptyArray (AlignedCaseLine a)
             formatCaseBranchToLines (Tuple binders guardedInfo) =
-              let
-                formattedBinders :: FormatDoc a
-                formattedBinders = formatCaseBinders conf binders
+              let formattedBinders :: FormatDoc a
+                  formattedBinders = formatCaseBinders conf binders
 
-                -- Helper to format the optional where clause
-                formatWhereClause :: Maybe (Tuple SourceToken (NonEmptyArray (LetBinding e))) -> FormatDoc a
-                formatWhereClause = foldMap \wh ->
-                   indent (formatWhere conf wh)
-
+                  -- Helper to format the optional where clause
+                  formatWhereClause :: Maybe (Tuple SourceToken (NonEmptyArray (LetBinding e))) -> FormatDoc a
+                  formatWhereClause = foldMap \wh ->
+                    indent (formatWhere conf wh)
               in case guardedInfo of
-                Unconditional tok whereValue@(Where { expr, bindings }) ->
-                  let
-                    rhsExpr :: FormatDoc a
-                    rhsExpr = Hang.toFormatDoc (formatHangingExpr conf expr)
-                    whereClause :: FormatDoc a
-                    whereClause = formatWhereClause bindings
-                    finalRhs :: FormatDoc a
-                    finalRhs = append rhsExpr whereClause
+                Unconditional tok (Where { expr, bindings }) ->
+                  let finalRhs :: FormatDoc a
+                      finalRhs = (Hang.toFormatDoc (formatHangingExpr conf expr)) <> (formatWhereClause bindings)
                   in NonEmptyArray.singleton
                     { lhs: formattedBinders
                     , arrow: formatToken conf tok
@@ -1077,28 +1065,24 @@ formatCase conf caseOf@{ keyword, head: Separated { head: exprHead, tail: exprTa
                 Guarded guards ->
                   guards # NonEmptyArray.mapWithIndex \i (GuardedExpr ge) ->
                     let
-                      whereClause@(Where { expr, bindings }) = ge."where"
+                      (Where { expr, bindings }) = ge."where"
 
-                      barToken :: FormatDoc a
-                      barToken = formatToken conf ge.bar
-                      formattedPatterns :: FormatDoc a
-                      formattedPatterns = formatPatternGuards conf ge.patterns
                       spaceDoc :: FormatDoc a
                       spaceDoc = text " "
-                      patternsWithSpace :: FormatDoc a
-                      patternsWithSpace = append spaceDoc formattedPatterns
+
                       guardLhsOnly :: FormatDoc a
-                      guardLhsOnly = append barToken patternsWithSpace
+                      guardLhsOnly = (formatToken conf ge.bar) <> spaceDoc <> (formatPatternGuards conf ge.patterns)
 
                       fullLhs :: FormatDoc a
-                      fullLhs = if i == 0 then append formattedBinders (append spaceDoc guardLhsOnly) else guardLhsOnly
+                      fullLhs = if i == 0 then
+                                  formattedBinders <> spaceDoc <> guardLhsOnly
+                                else
+                                  guardLhsOnly
 
                       rhsExpr :: FormatDoc a
                       rhsExpr = Hang.toFormatDoc (formatHangingExpr conf expr)
-                      whereClauseFormatted :: FormatDoc a
-                      whereClauseFormatted = formatWhereClause bindings
                       rhsDoc :: FormatDoc a
-                      rhsDoc = append rhsExpr whereClauseFormatted
+                      rhsDoc = rhsExpr <> (formatWhereClause bindings)
                     in
                       { lhs: fullLhs
                       , arrow: formatToken conf ge.separator
@@ -1107,18 +1091,18 @@ formatCase conf caseOf@{ keyword, head: Separated { head: exprHead, tail: exprTa
 
             -- Generate all lines with their components
             allLines :: Array (AlignedCaseLine a)
-            allLines = spy "Generated Lines (structure)" $ foldMap (NonEmptyArray.toArray <<< formatCaseBranchToLines) branches
+            allLines = foldMap (NonEmptyArray.toArray <<< formatCaseBranchToLines) branches
 
             -- Calculate widths of all LHS parts
             lhsDocs :: Array (FormatDoc a)
             lhsDocs = map _.lhs allLines
 
             lhsWidths :: Array Int
-            lhsWidths = spy "LHS Widths" $ map calculateWidth lhsDocs
+            lhsWidths = map calculateWidth lhsDocs
 
             -- Find the maximum width needed for the LHS column
             maxWidth :: Int
-            maxWidth = spy "Max Width" $ foldl max 0 lhsWidths
+            maxWidth = foldl max 0 lhsWidths
 
             -- Format each line, adding padding to align the arrows
             formatLineWithPadding :: AlignedCaseLine a -> FormatDoc a
@@ -1127,31 +1111,14 @@ formatCase conf caseOf@{ keyword, head: Separated { head: exprHead, tail: exprTa
                 currentLhs :: FormatDoc a
                 currentLhs = line.lhs
 
-                -- FIX: Use spy on the calculated width, not spyWith
-                widthValue :: Int
-                widthValue = calculateWidth currentLhs
-
-                currentWidth :: Int
-                currentWidth = spy "Width of LHS" widthValue -- DEBUG: Spy on the Int result
-
-                padding :: Int
-                padding = spy "Padding calculated" $ max 0 (maxWidth - currentWidth)
-
                 paddingDoc :: FormatDoc a
-                paddingDoc = text (power " " padding)
+                paddingDoc =
+                  let padding = max 0 (maxWidth - (calculateWidth currentLhs))
+                  in  text (power " " padding)
 
                 spaceDoc :: FormatDoc a
                 spaceDoc = text " "
-              in
-                -- Combine using explicit append and intermediate vars
-                append currentLhs
-                  ( append paddingDoc
-                      ( append spaceDoc
-                          ( append line.arrow
-                              (append spaceDoc line.rhs)
-                          )
-                      )
-                  )
+              in currentLhs <> paddingDoc <> spaceDoc <> line.arrow <> spaceDoc <> line.rhs
 
             -- Combine all formatted lines with breaks between them
             combinedAlignedBranches :: FormatDoc a
@@ -1160,9 +1127,7 @@ formatCase conf caseOf@{ keyword, head: Separated { head: exprHead, tail: exprTa
           in combinedAlignedBranches -- Use the combined aligned branches
 
       else
-        -- Fallback logic
-        trace "NOT aligning case arrows (fallback)" \_ -> -- DEBUG: Indicate fallback path taken
-          joinWithMap break (\branchTuple -> flexGroup (formatNonAligningCaseBranch conf branchTuple)) branches
+        joinWithMap break (\branchTuple -> flexGroup (formatNonAligningCaseBranch conf branchTuple)) branches
 
 
   in hang
@@ -1170,35 +1135,9 @@ formatCase conf caseOf@{ keyword, head: Separated { head: exprHead, tail: exprTa
        (hangBreak formattedBranchesDoc) -- Use the conditionally formatted branches
 
 
-formatCaseBranch :: forall e a. Format (Tuple (Separated (Binder e)) (Guarded e)) e a
-formatCaseBranch conf (Tuple (Separated { head, tail }) guarded) =
-  case guarded of
-    Unconditional tok (Where { expr, bindings }) ->
-      caseBinders
-        `space`
-          Hang.toFormatDoc (formatToken conf tok `hang` formatHangingExpr conf expr)
-        `break`
-          indent (foldMap (formatWhere conf) bindings)
-
-    Guarded guards ->
-      if NonEmptyArray.length guards == 1 then
-        Hang.toFormatDoc $ caseBinders `hang` formatGuardedExpr conf (NonEmptyArray.head guards)
-      else
-        caseBinders `flexSpaceBreak` indent do
-          joinWithMap break (Hang.toFormatDoc <<< formatGuardedExpr conf) guards
-  where
-  caseBinders =
-    flexGroup $ foldl
-      ( \doc (Tuple a b) ->
-          (doc <> indent (anchor (formatToken conf a)))
-            `spaceBreak` flexGroup (formatBinder conf b)
-      )
-      (flexGroup (formatBinder conf head))
-      tail
-
 type AlignedCaseLine a = { lhs :: FormatDoc a, arrow :: FormatDoc a, rhs :: FormatDoc a }
 
-formatCaseBinders :: forall e a. FormatOptions e a -> Separated (Binder e) -> FormatDoc a -- Removed DebugWarning
+formatCaseBinders :: forall e a. FormatOptions e a -> Separated (Binder e) -> FormatDoc a
 formatCaseBinders conf (Separated { head, tail }) =
   flexGroup $ foldl
     ( \doc (Tuple comma binder) ->
@@ -1208,13 +1147,13 @@ formatCaseBinders conf (Separated { head, tail }) =
     (flexGroup (formatBinder conf head))
     tail
 
-formatPatternGuards :: forall e a. FormatOptions e a -> Separated (PatternGuard e) -> FormatDoc a -- Removed DebugWarning
+formatPatternGuards :: forall e a. FormatOptions e a -> Separated (PatternGuard e) -> FormatDoc a
 formatPatternGuards conf (Separated { head, tail }) =
   flexGroup $
     formatListElem 2 formatPatternGuard conf head
       `softBreak` formatListTail 2 formatPatternGuard conf tail
 
-formatNonAligningCaseBranch :: forall e a. FormatOptions e a -> Tuple (Separated (Binder e)) (Guarded e) -> FormatDoc a -- Removed DebugWarning
+formatNonAligningCaseBranch :: forall e a. FormatOptions e a -> Tuple (Separated (Binder e)) (Guarded e) -> FormatDoc a
 formatNonAligningCaseBranch conf (Tuple binders guarded) =
   let
     formattedBinders :: FormatDoc a
@@ -1225,7 +1164,7 @@ formatNonAligningCaseBranch conf (Tuple binders guarded) =
     formatWhereClause = foldMap \wh -> indent (formatWhere conf wh)
 
   in case guarded of
-    Unconditional tok whereValue@(Where { expr, bindings }) ->
+    Unconditional tok (Where { expr, bindings }) ->
       let
         hangedExpr :: FormatDoc a
         hangedExpr = Hang.toFormatDoc (formatToken conf tok `hang` formatHangingExpr conf expr)
@@ -1250,7 +1189,7 @@ formatNonAligningCaseBranch conf (Tuple binders guarded) =
 
 
 formatGuardedExpr :: forall e a. FormatHanging (GuardedExpr e) e a
-formatGuardedExpr conf (GuardedExpr ge@{ bar, patterns, separator, where: Where { expr, bindings } }) =
+formatGuardedExpr conf (GuardedExpr { bar, patterns, separator, where: Where { expr, bindings } }) =
   hangWithIndent (align 2 <<< indent)
     ( hangBreak -- The part before the RHS expression
         ( formatToken conf bar
