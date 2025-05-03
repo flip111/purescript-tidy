@@ -50,8 +50,13 @@ import Dodo (Doc)
 import Dodo as Dodo
 import Dodo.Internal (LocalOptions)
 import Tidy.Util (splitLines)
+import Data.Show.Generic (genericShow)
+import Data.Generic.Rep (class Generic)
 
 data ForceBreak = ForceNone | ForceSpace | ForceBreak
+instance showForceBreak :: Show ForceBreak where
+  show = genericShow
+derive instance genericForceBreak :: Generic ForceBreak _
 
 derive instance eqForceBreak :: Eq ForceBreak
 derive instance ordForceBreak :: Ord ForceBreak

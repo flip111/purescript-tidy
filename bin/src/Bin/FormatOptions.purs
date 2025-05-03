@@ -26,6 +26,7 @@ type FormatOptions =
   , width :: Maybe Int
   , alignCaseArrows :: Boolean
   , alignFunctionDefinition :: Boolean
+  , compactRecords :: Boolean
   }
 
 defaults :: FormatOptions
@@ -40,6 +41,7 @@ defaults =
   , width: Nothing
   , alignCaseArrows: false
   , alignFunctionDefinition: false
+  , compactRecords: false
   }
 
 formatOptions :: ArgParser FormatOptions
@@ -104,6 +106,10 @@ formatOptions =
         Arg.flag [ "--align-function-definition"]
           "Vertically aligns all the equal signs in a function definition."
           # Arg.boolean
+    , compactRecords:
+        Arg.flag [ "--compact-records", "-cr" ]
+          "Format records without additional space at the start and end of the curly brackets."
+          # Arg.boolean
     }
 
 unicodeOption :: ArgParser UnicodeOption
@@ -134,6 +140,7 @@ fromJson json = do
   width <- obj .:? "width"
   alignCaseArrows <- obj .:? "alignCaseArrows"
   alignFunctionDefinition <- obj .:? "alignFunctionDefinition"
+  compactRecords <- obj .:? "compactRecords"
   pure
     { importSort: fromMaybe defaults.importSort importSort
     , importWrap: fromMaybe defaults.importWrap importWrap
@@ -145,6 +152,7 @@ fromJson json = do
     , width: width <|> defaults.width
     , alignCaseArrows: fromMaybe defaults.alignCaseArrows alignCaseArrows
     , alignFunctionDefinition: fromMaybe defaults.alignFunctionDefinition alignFunctionDefinition
+    , compactRecords: fromMaybe defaults.compactRecords compactRecords
     }
 
 toJson :: FormatOptions -> Json
@@ -160,6 +168,7 @@ toJson options =
     # extend (assoc "width" (maybe jsonNull encodeJson options.width))
     # extend (assoc "alignCaseArrows" options.alignCaseArrows)
     # extend (assoc "alignFunctionDefinition" options.alignFunctionDefinition)
+    # extend (assoc "compactRecords" options.compactRecords)
 
 typeArrowPlacementFromString :: String -> Either JsonDecodeError TypeArrowOption
 typeArrowPlacementFromString = case _ of
