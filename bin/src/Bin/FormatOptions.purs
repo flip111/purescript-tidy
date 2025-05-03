@@ -25,6 +25,7 @@ type FormatOptions =
   , unicode :: UnicodeOption
   , width :: Maybe Int
   , alignCaseArrows :: Boolean
+  , alignFunctionDefinition :: Boolean
   }
 
 defaults :: FormatOptions
@@ -38,6 +39,7 @@ defaults =
   , unicode: UnicodeSource
   , width: Nothing
   , alignCaseArrows: false
+  , alignFunctionDefinition: false
   }
 
 formatOptions :: ArgParser FormatOptions
@@ -98,6 +100,10 @@ formatOptions =
         Arg.flag [ "--align-case-arrows", "-aca" ]
           "Vertically aligns all the arrows from a case-clause"
           # Arg.boolean
+    , alignFunctionDefinition:
+        Arg.flag [ "--align-function-definition"]
+          "Vertically aligns all the equal signs in a function definition."
+          # Arg.boolean
     }
 
 unicodeOption :: ArgParser UnicodeOption
@@ -127,6 +133,7 @@ fromJson json = do
   unicode <- traverse unicodeFromString =<< obj .:? "unicode"
   width <- obj .:? "width"
   alignCaseArrows <- obj .:? "alignCaseArrows"
+  alignFunctionDefinition <- obj .:? "alignFunctionDefinition"
   pure
     { importSort: fromMaybe defaults.importSort importSort
     , importWrap: fromMaybe defaults.importWrap importWrap
@@ -137,6 +144,7 @@ fromJson json = do
     , unicode: fromMaybe defaults.unicode unicode
     , width: width <|> defaults.width
     , alignCaseArrows: fromMaybe defaults.alignCaseArrows alignCaseArrows
+    , alignFunctionDefinition: fromMaybe defaults.alignFunctionDefinition alignFunctionDefinition
     }
 
 toJson :: FormatOptions -> Json
@@ -151,6 +159,7 @@ toJson options =
     # extend (assoc "unicode" (unicodeToString options.unicode))
     # extend (assoc "width" (maybe jsonNull encodeJson options.width))
     # extend (assoc "alignCaseArrows" options.alignCaseArrows)
+    # extend (assoc "alignFunctionDefinition" options.alignFunctionDefinition)
 
 typeArrowPlacementFromString :: String -> Either JsonDecodeError TypeArrowOption
 typeArrowPlacementFromString = case _ of

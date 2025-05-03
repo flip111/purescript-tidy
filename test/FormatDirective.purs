@@ -115,6 +115,7 @@ parseDirectivesFromModule (Module { header: ModuleHeader header, body }) =
         , importSort: opts.importSort
         , importWrap: opts.importWrap
         , alignCaseArrows: opts.alignCaseArrows
+        , alignFunctionDefinition: opts.alignFunctionDefinition
         }
     }
     where

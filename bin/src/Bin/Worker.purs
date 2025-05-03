@@ -41,6 +41,7 @@ type WorkerConfig =
   , unicode :: String
   , width :: Int
   , alignCaseArrows :: Boolean
+  , alignFunctionDefinition :: Boolean
   }
 
 toWorkerConfig :: FormatOptions -> WorkerConfig
@@ -54,6 +55,7 @@ toWorkerConfig options =
   , unicode: FormatOptions.unicodeToString options.unicode
   , width: fromMaybe top options.width
   , alignCaseArrows: options.alignCaseArrows
+  , alignFunctionDefinition: options.alignFunctionDefinition
   }
 
 type WorkerData =
@@ -93,6 +95,7 @@ formatCommand args operators contents = do
           , typeArrowPlacement = args.typeArrowPlacement
           , unicode = args.unicode
           , alignCaseArrows = args.alignCaseArrows
+          , alignFunctionDefinition = args.alignFunctionDefinition
           }
       Right $ print $ toDoc $ formatModule opts ok
     ParseSucceededWithErrors _ errs -> do
@@ -126,6 +129,7 @@ formatInPlaceCommand shouldCheck operators { filePath, config } = do
             FormatOptions.unicodeFromString config.unicode
       , width: Just config.width
       , alignCaseArrows: config.alignCaseArrows
+      , alignFunctionDefinition: config.alignFunctionDefinition
       }
   contents <- FS.readTextFile UTF8 filePath
   start <- liftEffect hrtime
