@@ -23,7 +23,7 @@ import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Array.NonEmpty as NonEmptyArray
 import Data.Foldable (foldMap, foldl, foldr, maximum)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe, isJust)
+import Data.Maybe (Maybe(..), isJust, fromMaybe)
 import Data.Monoid (power)
 import Data.Monoid as Monoid
 import Data.Newtype (un)
@@ -35,14 +35,14 @@ import Dodo as Dodo
 import Partial.Unsafe (unsafeCrashWith)
 import PureScript.CST.Errors (RecoveredError(..))
 import PureScript.CST.Types (AppSpine(..), Binder(..), CaseOf, ClassFundep(..), ClassHead, Comment(..), DataCtor(..), DataHead, DataMembers(..), Declaration(..), Delimited, DelimitedNonEmpty, DoStatement(..), Export(..), Expr(..), FixityOp(..), Foreign(..), Guarded(..), GuardedExpr(..), Ident, IfThenElse, Import(..), ImportDecl(..), Instance(..), InstanceBinding(..), InstanceHead, Label, Labeled(..), LetBinding(..), LineFeed, Module(..), ModuleBody(..), ModuleHeader(..), ModuleName, Name(..), OneOrDelimited(..), Operator, PatternGuard(..), Prefixed(..), Proper, QualifiedName(..), RecordLabeled(..), RecordUpdate(..), Row(..), Separated(..), SourceStyle(..), SourceToken, Token(..), Type(..), TypeVarBinding(..), ValueBindingFields, Where(..), Wrapped(..))
-import Tidy.Doc (FormatDoc(..), align, alignCurrentColumn, anchor, break, flexDoubleBreak, flexGroup, flexSoftBreak, flexSpaceBreak, forceMinSourceBreaks, fromDoc, indent, joinWith, joinWithMap, leadingBlockComment, leadingLineComment, locally, softBreak, softSpace, sourceBreak, space, spaceBreak, text, trailingBlockComment, trailingLineComment)
 import Tidy.Doc (FormatDoc, toDoc) as Exports
+import Tidy.Doc (FormatDoc(..), align, alignCurrentColumn, anchor, break, flexDoubleBreak, flexGroup, flexSoftBreak, flexSpaceBreak, forceMinSourceBreaks, fromDoc, indent, joinWith, joinWithMap, leadingBlockComment, leadingLineComment, locally, softBreak, softSpace, sourceBreak, space, spaceBreak, text, trailingBlockComment, trailingLineComment)
 import Tidy.Doc as Doc
 import Tidy.Hang (HangingDoc, HangingOp(..), hang, hangApp, hangBreak, hangOps, hangWithIndent)
 import Tidy.Hang as Hang
 import Tidy.Precedence (OperatorNamespace(..), OperatorTree(..), PrecedenceMap, QualifiedOperator(..), toOperatorTree)
-import Tidy.Token (UnicodeOption(..)) as Exports
 import Tidy.Token (UnicodeOption(..), printToken)
+import Tidy.Token (UnicodeOption(..)) as Exports
 import Tidy.Util (nameOf, overLabel, splitLines, splitStringEscapeLines)
 
 data TypeArrowOption
@@ -73,6 +73,7 @@ type FormatOptions e a =
   , alignCaseArrows :: Boolean
   , alignFunctionDefinition :: Boolean
   , compactRecords :: Boolean
+  , whereClauseSameLine :: Boolean
   }
 
 defaultFormatOptions :: forall e a. FormatError e => FormatOptions e a
@@ -86,6 +87,7 @@ defaultFormatOptions =
   , alignCaseArrows: false
   , alignFunctionDefinition: false
   , compactRecords: false
+  , whereClauseSameLine: false
   }
 
 class FormatError e where
@@ -1150,14 +1152,59 @@ formatCase conf { keyword, head: Separated { head: exprHead, tail: exprTail }, "
        (formatToken conf keyword `flexSpaceBreak` indent caseHead)
        (hangBreak formattedBranchesDoc) -- Use the conditionally formatted branches
 
+type AlignedCaseLine a = { lhs :: FormatDoc a, arrow :: FormatDoc a, rhs :: FormatDoc a }
+
+formatCaseBinders :: forall e a. FormatOptions e a -> Separated (Binder e) -> FormatDoc a
+formatCaseBinders conf (Separated { head, tail }) =
+  flexGroup $ foldl
+    ( \doc (Tuple comma binder) ->
+        append doc (indent (anchor (formatToken conf comma)))
+          `spaceBreak` flexGroup (formatBinder conf binder)
+    )
+    (flexGroup (formatBinder conf head))
+    tail
+
+formatNonAligningCaseBranch :: forall e a. FormatOptions e a -> Tuple (Separated (Binder e)) (Guarded e) -> FormatDoc a
+formatNonAligningCaseBranch conf (Tuple binders guarded) =
+  let
+    formattedBinders :: FormatDoc a
+    formattedBinders = formatCaseBinders conf binders
+
+    -- Helper to format the optional where clause
+    formatWhereClause :: Maybe (Tuple SourceToken (NonEmptyArray (LetBinding e))) -> FormatDoc a
+    formatWhereClause = foldMap \wh -> indent (formatWhere conf wh)
+
+  in case guarded of
+    Unconditional tok (Where { expr, bindings }) ->
+      let
+        hangedExpr :: FormatDoc a
+        hangedExpr = Hang.toFormatDoc (formatToken conf tok `hang` formatHangingExpr conf expr)
+
+        whereClause :: FormatDoc a
+        whereClause = formatWhereClause bindings
+
+        rhsAndWhere :: FormatDoc a
+        rhsAndWhere = append hangedExpr whereClause
+
+        spaceDoc :: FormatDoc a
+        spaceDoc = text " "
+        spaceAndRhs :: FormatDoc a
+        spaceAndRhs = append spaceDoc rhsAndWhere
+
+      in append formattedBinders spaceAndRhs
+
+
+    Guarded guards ->
+      formattedBinders `flexSpaceBreak` indent do
+        joinWithMap break (Hang.toFormatDoc <<< formatGuardedExpr conf) guards
 
 formatGuardedExpr :: forall e a. FormatHanging (GuardedExpr e) e a
-formatGuardedExpr conf (GuardedExpr { bar, patterns, separator, where: Where { expr, bindings } }) =
+formatGuardedExpr conf (GuardedExpr ge@{ patterns: Separated { head, tail }, where: Where { expr, bindings } }) =
   hangWithIndent (align 2 <<< indent)
-    ( hangBreak -- The part before the RHS expression
-        ( formatToken conf bar
-            `space` flexGroup (formatPatternGuards conf patterns) -- Use helper here
-            `space` anchor (formatToken conf separator) -- The arrow
+    ( hangBreak
+        ( formatToken conf ge.bar
+            `space` flexGroup patternGuards
+            `space` anchor (formatToken conf ge.separator)
         )
     )
     case bindings of
@@ -1167,6 +1214,10 @@ formatGuardedExpr conf (GuardedExpr { bar, patterns, separator, where: Where { e
         [ formatHangingExpr conf expr
         , hangBreak $ formatWhere conf wh
         ]
+  where
+  patternGuards =
+    formatListElem 2 formatPatternGuard conf head
+      `softBreak` formatListTail 2 formatPatternGuard conf tail
 
 formatPatternGuard :: forall e a. Format (PatternGuard e) e a
 formatPatternGuard conf (PatternGuard { binder, expr }) = case binder of
@@ -1179,8 +1230,10 @@ formatPatternGuard conf (PatternGuard { binder, expr }) = case binder of
 
 formatWhere :: forall e a. Format (Tuple SourceToken (NonEmptyArray (LetBinding e))) e a
 formatWhere conf (Tuple kw bindings) =
-  formatToken conf kw
-    `break` formatLetGroups conf (NonEmptyArray.toArray bindings)
+  if conf.whereClauseSameLine then
+    formatToken conf kw `space` (alignCurrentColumn $ formatLetGroups conf (NonEmptyArray.toArray bindings))
+  else
+    formatToken conf kw `break` (formatLetGroups conf (NonEmptyArray.toArray bindings))
 
 formatLetBinding :: forall e a. Format (LetBinding e) e a
 formatLetBinding conf = case _ of
@@ -1554,42 +1607,10 @@ formatValueLHS conf vbf =
     `flexSpaceBreak`
       indent (joinWithMap spaceBreak (anchor <<< formatBinder conf) vbf.binders)
 
-type AlignedCaseLine a = { lhs :: FormatDoc a, arrow :: FormatDoc a, rhs :: FormatDoc a }
-
-formatCaseBinders :: forall e a. FormatOptions e a -> Separated (Binder e) -> FormatDoc a
-formatCaseBinders conf (Separated { head, tail }) =
-  flexGroup $ foldl
-    ( \doc (Tuple comma binder) ->
-        append doc (indent (anchor (formatToken conf comma)))
-          `spaceBreak` flexGroup (formatBinder conf binder)
-    )
-    (flexGroup (formatBinder conf head))
-    tail
-
 formatPatternGuards :: forall e a. FormatOptions e a -> Separated (PatternGuard e) -> FormatDoc a
 formatPatternGuards conf (Separated { head, tail }) =
    formatListElem 2 formatPatternGuard conf head
      `softBreak` formatListTail 2 formatPatternGuard conf tail
-
-formatNonAligningCaseBranch :: forall e a. FormatOptions e a -> Tuple (Separated (Binder e)) (Guarded e) -> FormatDoc a
-formatNonAligningCaseBranch conf (Tuple binders guarded) =
-  let
-    formattedBinders = formatCaseBinders conf binders
-
-    -- Helper to format the optional where clause
-    formatWhereClause :: Maybe (Tuple SourceToken (NonEmptyArray (LetBinding e))) -> FormatDoc a
-    formatWhereClause = foldMap \wh -> indent (formatWhere conf wh)
-
-  in case guarded of
-    Unconditional tok (Where { expr, bindings }) ->
-      let
-        hangedExpr = Hang.toFormatDoc (formatToken conf tok `hang` formatHangingExpr conf expr)
-
-      in formattedBinders <> (text " ") <> hangedExpr <> (formatWhereClause bindings)
-
-    Guarded guards ->
-      formattedBinders `flexSpaceBreak` indent do
-        joinWithMap break (Hang.toFormatDoc <<< formatGuardedExpr conf) guards
 
 formatAGuardedExpr :: forall e a. FormatHanging (GuardedExpr e) e a
 formatAGuardedExpr conf (GuardedExpr ge@{ patterns, where: Where { expr, bindings } }) =

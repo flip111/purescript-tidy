@@ -27,6 +27,7 @@ type FormatOptions =
   , alignCaseArrows :: Boolean
   , alignFunctionDefinition :: Boolean
   , compactRecords :: Boolean
+  , whereClauseSameLine :: Boolean
   }
 
 defaults :: FormatOptions
@@ -42,6 +43,7 @@ defaults =
   , alignCaseArrows: false
   , alignFunctionDefinition: false
   , compactRecords: false
+  , whereClauseSameLine: false
   }
 
 formatOptions :: ArgParser FormatOptions
@@ -110,6 +112,10 @@ formatOptions =
         Arg.flag [ "--compact-records", "-cr" ]
           "Format records without additional space at the start and end of the curly brackets."
           # Arg.boolean
+    , whereClauseSameLine:
+       Arg.flag [ "--where-clause-same-line", "-wcsl" ]
+        "Put the function definition directly after \"where\" instead of the next line."
+        # Arg.boolean
     }
 
 unicodeOption :: ArgParser UnicodeOption
@@ -141,6 +147,7 @@ fromJson json = do
   alignCaseArrows <- obj .:? "alignCaseArrows"
   alignFunctionDefinition <- obj .:? "alignFunctionDefinition"
   compactRecords <- obj .:? "compactRecords"
+  whereClauseSameLine <- obj .:? "whereClauseSameLine"
   pure
     { importSort: fromMaybe defaults.importSort importSort
     , importWrap: fromMaybe defaults.importWrap importWrap
@@ -153,6 +160,7 @@ fromJson json = do
     , alignCaseArrows: fromMaybe defaults.alignCaseArrows alignCaseArrows
     , alignFunctionDefinition: fromMaybe defaults.alignFunctionDefinition alignFunctionDefinition
     , compactRecords: fromMaybe defaults.compactRecords compactRecords
+    , whereClauseSameLine: fromMaybe defaults.whereClauseSameLine whereClauseSameLine
     }
 
 toJson :: FormatOptions -> Json
@@ -169,6 +177,7 @@ toJson options =
     # extend (assoc "alignCaseArrows" options.alignCaseArrows)
     # extend (assoc "alignFunctionDefinition" options.alignFunctionDefinition)
     # extend (assoc "compactRecords" options.compactRecords)
+    # extend (assoc "whereClauseSameLine" (encodeJson options.whereClauseSameLine))
 
 typeArrowPlacementFromString :: String -> Either JsonDecodeError TypeArrowOption
 typeArrowPlacementFromString = case _ of
