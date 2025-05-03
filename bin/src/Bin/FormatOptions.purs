@@ -24,6 +24,7 @@ type FormatOptions =
   , typeArrowPlacement :: TypeArrowOption
   , unicode :: UnicodeOption
   , width :: Maybe Int
+  , alignFunctionDefinition :: Boolean
   }
 
 defaults :: FormatOptions
@@ -36,6 +37,7 @@ defaults =
   , typeArrowPlacement: TypeArrowFirst
   , unicode: UnicodeSource
   , width: Nothing
+  , alignFunctionDefinition: false
   }
 
 formatOptions :: ArgParser FormatOptions
@@ -92,6 +94,10 @@ formatOptions =
           "The maximum width of the document in columns.\nDefaults to no maximum."
           # Arg.int
           # Arg.optional
+    , alignFunctionDefinition:
+        Arg.flag [ "--align-function-definition"]
+          "Vertically aligns all the equal signs in a function definition."
+          # Arg.boolean
     }
 
 unicodeOption :: ArgParser UnicodeOption
@@ -120,6 +126,7 @@ fromJson json = do
   typeArrowPlacement <- traverse typeArrowPlacementFromString =<< obj .:? "typeArrowPlacement"
   unicode <- traverse unicodeFromString =<< obj .:? "unicode"
   width <- obj .:? "width"
+  alignFunctionDefinition <- obj .:? "alignFunctionDefinition"
   pure
     { importSort: fromMaybe defaults.importSort importSort
     , importWrap: fromMaybe defaults.importWrap importWrap
@@ -129,6 +136,7 @@ fromJson json = do
     , typeArrowPlacement: fromMaybe defaults.typeArrowPlacement typeArrowPlacement
     , unicode: fromMaybe defaults.unicode unicode
     , width: width <|> defaults.width
+    , alignFunctionDefinition: fromMaybe defaults.alignFunctionDefinition alignFunctionDefinition
     }
 
 toJson :: FormatOptions -> Json
@@ -142,6 +150,7 @@ toJson options =
     # extend (assoc "typeArrowPlacement" (typeArrowPlacementToString options.typeArrowPlacement))
     # extend (assoc "unicode" (unicodeToString options.unicode))
     # extend (assoc "width" (maybe jsonNull encodeJson options.width))
+    # extend (assoc "alignFunctionDefinition" options.alignFunctionDefinition)
 
 typeArrowPlacementFromString :: String -> Either JsonDecodeError TypeArrowOption
 typeArrowPlacementFromString = case _ of

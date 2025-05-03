@@ -21,10 +21,9 @@ import Prim hiding (Row, Type)
 import Data.Array as Array
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Array.NonEmpty as NonEmptyArray
-import Data.Foldable (foldMap, foldl, foldr)
-import Data.List.NonEmpty as NonEmptyList
+import Data.Foldable (foldMap, foldl, foldr, maximum)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), isJust, maybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust)
 import Data.Monoid (power)
 import Data.Monoid as Monoid
 import Data.Newtype (un)
@@ -34,7 +33,7 @@ import Dodo as Dodo
 import Partial.Unsafe (unsafeCrashWith)
 import PureScript.CST.Errors (RecoveredError(..))
 import PureScript.CST.Types (AppSpine(..), Binder(..), ClassFundep(..), ClassHead, Comment(..), DataCtor(..), DataHead, DataMembers(..), Declaration(..), Delimited, DelimitedNonEmpty, DoStatement(..), Export(..), Expr(..), FixityOp(..), Foreign(..), Guarded(..), GuardedExpr(..), Ident, IfThenElse, Import(..), ImportDecl(..), Instance(..), InstanceBinding(..), InstanceHead, Label, Labeled(..), LetBinding(..), LineFeed, Module(..), ModuleBody(..), ModuleHeader(..), ModuleName, Name(..), OneOrDelimited(..), Operator, PatternGuard(..), Prefixed(..), Proper, QualifiedName(..), RecordLabeled(..), RecordUpdate(..), Row(..), Separated(..), SourceStyle(..), SourceToken, Token(..), Type(..), TypeVarBinding(..), ValueBindingFields, Where(..), Wrapped(..))
-import Tidy.Doc (FormatDoc, align, alignCurrentColumn, anchor, break, flexDoubleBreak, flexGroup, flexSoftBreak, flexSpaceBreak, forceMinSourceBreaks, fromDoc, indent, joinWith, joinWithMap, leadingBlockComment, leadingLineComment, locally, softBreak, softSpace, sourceBreak, space, spaceBreak, text, trailingBlockComment, trailingLineComment)
+import Tidy.Doc (FormatDoc(..), align, alignCurrentColumn, anchor, break, flexDoubleBreak, flexGroup, flexSoftBreak, flexSpaceBreak, forceMinSourceBreaks, fromDoc, indent, joinWith, joinWithMap, leadingBlockComment, leadingLineComment, locally, softBreak, softSpace, sourceBreak, space, spaceBreak, text, trailingBlockComment, trailingLineComment)
 import Tidy.Doc (FormatDoc, toDoc) as Exports
 import Tidy.Doc as Doc
 import Tidy.Hang (HangingDoc, HangingOp(..), hang, hangApp, hangBreak, hangOps, hangWithIndent)
@@ -43,6 +42,8 @@ import Tidy.Precedence (OperatorNamespace(..), OperatorTree(..), PrecedenceMap, 
 import Tidy.Token (UnicodeOption(..)) as Exports
 import Tidy.Token (UnicodeOption(..), printToken)
 import Tidy.Util (nameOf, overLabel, splitLines, splitStringEscapeLines)
+import Data.Traversable (traverse)
+import Data.String as String
 
 data TypeArrowOption
   = TypeArrowFirst
@@ -69,6 +70,7 @@ type FormatOptions e a =
   , operators :: PrecedenceMap
   , importSort :: ImportSortOption
   , importWrap :: ImportWrapOption
+  , alignFunctionDefinition :: Boolean
   }
 
 defaultFormatOptions :: forall e a. FormatError e => FormatOptions e a
@@ -79,6 +81,7 @@ defaultFormatOptions =
   , operators: Map.empty
   , importSort: ImportSortSource
   , importWrap: ImportWrapSource
+  , alignFunctionDefinition: false
   }
 
 class FormatError e where
@@ -217,7 +220,7 @@ formatModule conf (Module { header: ModuleHeader header, body: ModuleBody body }
         ImportWrapSource ->
           locally (_ { pageWidth = top, ribbonRatio = 1.0 }) imports
     , forceMinSourceBreaks 2 $ formatTopLevelGroups conf body.decls
-    , foldr (formatComment leadingLineComment leadingBlockComment) mempty body.trailingComments
+    , foldr (handleTrailingComment conf) mempty body.trailingComments
     ]
   where
   formatImports k =
@@ -256,6 +259,21 @@ formatModule conf (Module { header: ModuleHeader header, body: ModuleBody body }
             true
           _, _ ->
             false
+
+  handleTrailingComment :: forall e' a'. FormatOptions e' a' -> Comment LineFeed -> FormatDoc a' -> FormatDoc a'
+  handleTrailingComment _ = formatComment' leadingLineComment leadingBlockComment
+    where
+      formatComment'
+        :: (String -> FormatDoc a' -> FormatDoc a')
+        -> (String -> FormatDoc a' -> FormatDoc a')
+        -> Comment LineFeed
+        -> FormatDoc a'
+        -> FormatDoc a'
+      formatComment' line block comm doc = case comm of
+         Comment str | leading <- SCU.take 2 str, leading == "--" || leading == "#!" -> line str doc
+         Comment str -> block str doc
+         Line _ n -> sourceBreak n doc
+         Space _ -> doc
 
 data ImportModuleComparison =
   ImportModuleCmp ModuleName Int (Array ImportComparison) (Maybe ModuleName)
@@ -1301,31 +1319,33 @@ data DeclGroup
   | DeclGroupForeign
   | DeclGroupRole
   | DeclGroupUnknown
+derive instance eqDeclGroup :: Eq DeclGroup
 
 data DeclGroupSeparator
   = DeclGroupSame
   | DeclGroupHard
   | DeclGroupSoft
+derive instance eqDeclGroupSeparator :: Eq DeclGroupSeparator
 
 formatTopLevelGroups :: forall e a. Format (Array (Declaration e)) e a
-formatTopLevelGroups = formatDeclGroups topDeclGroupSeparator topDeclGroup formatDecl
+formatTopLevelGroups = formatDeclGroups getVbfFromDeclaration topDeclGroupSeparator topDeclGroup formatDecl
   where
   topDeclGroupSeparator = case _, _ of
     DeclGroupValue a, DeclGroupValue b ->
       if a == b then DeclGroupSame
       else DeclGroupSoft
-    DeclGroupValueSignature a, DeclGroupValue b ->
-      if a == b then DeclGroupSame
+    DeclGroupValue valName, DeclGroupValueSignature sigName ->
+      if valName == sigName then DeclGroupSame
       else DeclGroupHard
-    _, DeclGroupValueSignature _ -> DeclGroupHard
+    DeclGroupType typeName, DeclGroupTypeSignature sigName ->
+      if typeName == sigName then DeclGroupSame
+      else DeclGroupHard
+    DeclGroupClass className, DeclGroupTypeSignature sigName ->
+      if className == sigName then DeclGroupSame
+      else DeclGroupHard
+    DeclGroupValueSignature _, _ -> DeclGroupHard
+    DeclGroupTypeSignature _, _ -> DeclGroupHard
     DeclGroupType _, DeclGroupType _ -> DeclGroupSoft
-    DeclGroupTypeSignature a, DeclGroupType b ->
-      if a == b then DeclGroupSame
-      else DeclGroupHard
-    DeclGroupTypeSignature a, DeclGroupClass b ->
-      if a == b then DeclGroupSame
-      else DeclGroupHard
-    _, DeclGroupTypeSignature _ -> DeclGroupHard
     DeclGroupClass _, DeclGroupClass _ -> DeclGroupSoft
     _, DeclGroupClass _ -> DeclGroupHard
     DeclGroupInstance, DeclGroupInstance -> DeclGroupSoft
@@ -1353,11 +1373,234 @@ formatTopLevelGroups = formatDeclGroups topDeclGroupSeparator topDeclGroup forma
     DeclRole _ _ _ _ -> DeclGroupRole
     DeclError _ -> DeclGroupUnknown
 
+  getVbfFromDeclaration = case _ of
+    DeclValue vbf -> Just vbf
+    _ -> Nothing
+
+type DeclarationGroup b = { group :: DeclGroup, decls :: NonEmptyArray b }
+type FormattedDeclarationGroup a = { sep :: DeclGroupSeparator, doc :: FormatDoc a }
+
+calculateWidth :: forall a. FormatDoc a -> Int
+calculateWidth (FormatDoc { doc: dodoDoc }) =
+  let
+    opts :: Dodo.PrintOptions
+    opts = { pageWidth: 1_000_000, ribbonRatio: 1.0, indentUnit: " ", indentWidth: 1 }
+    renderToString :: Dodo.Doc a -> String
+    renderToString docToRender = Dodo.print Dodo.plainText opts docToRender
+  in String.length (renderToString dodoDoc)
+
+formatValueLHS :: forall e a. FormatOptions e a -> ValueBindingFields e -> FormatDoc a
+formatValueLHS conf vbf =
+  formatName conf vbf.name
+    `flexSpaceBreak`
+      indent (joinWithMap spaceBreak (anchor <<< formatBinder conf) vbf.binders)
+
+formatPatternGuards :: forall e a. FormatOptions e a -> Separated (PatternGuard e) -> FormatDoc a
+formatPatternGuards conf (Separated { head, tail }) =
+   formatListElem 2 formatPatternGuard conf head
+     `softBreak` formatListTail 2 formatPatternGuard conf tail
+
+formatAGuardedExpr :: forall e a. FormatHanging (GuardedExpr e) e a
+formatAGuardedExpr conf (GuardedExpr ge@{ patterns, where: Where { expr, bindings } }) =
+  hangWithIndent (align 2 <<< indent)
+    ( hangBreak
+        ( formatToken conf ge.bar
+            `space` flexGroup (formatPatternGuards conf patterns)
+            `space` anchor (formatToken conf ge.separator)
+        )
+    )
+    case bindings of
+      Nothing -> [ formatHangingExpr conf expr ]
+      Just wh -> [ formatHangingExpr conf expr, hangBreak $ formatWhere conf wh ]
+
+formatValueBindingWithAlignment
+  :: forall e a
+   . FormatOptions e a
+  -> Int                         -- ^ Max width of the LHS column for this group
+  -> ValueBindingFields e        -- ^ The specific binding to format
+  -> FormatDoc a
+formatValueBindingWithAlignment conf maxWidth vbf =
+  let
+    lhsDoc = formatValueLHS conf vbf
+    lhsWidth = calculateWidth lhsDoc
+    paddingWidth = max 0 (maxWidth - lhsWidth)
+    paddingDoc = text (power " " paddingWidth)
+    lhsWithPadding = lhsDoc <> paddingDoc
+
+  in case vbf.guarded of
+    Unconditional tok (Where { expr, bindings }) ->
+      let
+        exprDoc = Hang.toFormatDoc (indent (anchor (formatToken conf tok)) `hang` formatHangingExpr conf expr)
+        whereClauseDoc = foldMap (\w -> fromDoc Dodo.break <> indent (formatWhere conf w)) bindings
+      in
+        lhsWithPadding `space` (exprDoc <> whereClauseDoc)
+
+    Guarded guards ->
+      let
+        formatFirstGuard guardedExpr =
+           lhsWithPadding `space` Hang.toFormatDoc (formatAGuardedExpr conf guardedExpr)
+
+        formatSubsequentGuard guardedExpr =
+           let indentWidth = calculateWidth lhsWithPadding + 1 -- +1 for the space
+           in align indentWidth (Hang.toFormatDoc (formatAGuardedExpr conf guardedExpr))
+
+        { head, tail } = NonEmptyArray.uncons guards
+
+        formattedGuards =
+          if Array.null tail then
+            formatFirstGuard head
+          else
+            -- Use infix break operator between guards
+            formatFirstGuard head `break` joinWithMap break formatSubsequentGuard tail
+      in
+        formattedGuards
+
+joinFormattedGroups :: forall a. Array (FormattedDeclarationGroup a) -> FormatDoc a
+joinFormattedGroups = foldl combineDocs mempty
+  where
+  combineDocs :: FormatDoc a -> FormattedDeclarationGroup a -> FormatDoc a
+  combineDocs acc@(FormatDoc accRec) { sep, doc } =
+    if accRec.isEmpty then
+      doc
+    else
+      case sep of
+        DeclGroupSame -> acc `break` doc
+        DeclGroupSoft -> acc `flexDoubleBreak` doc
+        DeclGroupHard -> acc `break` (forceMinSourceBreaks 2 doc)
+
+groupDeclarations
+  :: forall b
+   . (b -> DeclGroup)
+  -> (DeclGroup -> DeclGroup -> DeclGroupSeparator)
+  -> Array b
+  -> Array (DeclarationGroup b)
+groupDeclarations groupIdentifier declSeparator ds = case Array.uncons ds of
+  Nothing -> []
+  Just { head: dHead, tail: dTail } -> Array.reverse $ NonEmptyArray.toArray $ foldl folder (NonEmptyArray.singleton initialGroup) dTail
+    where
+      initialGroup = { group: groupIdentifier dHead, decls: NonEmptyArray.singleton dHead }
+      folder :: NonEmptyArray (DeclarationGroup b) -> b -> NonEmptyArray (DeclarationGroup b)
+      folder accArray currentDecl =
+        let
+          currentGroupType = groupIdentifier currentDecl
+          { head: latestGroup, tail: accTail } = NonEmptyArray.uncons accArray
+          sepType = declSeparator currentGroupType latestGroup.group
+        in
+          if sepType == DeclGroupSame then
+             let updatedGroup = latestGroup { decls = NonEmptyArray.snoc latestGroup.decls currentDecl }
+             in NonEmptyArray.cons' updatedGroup accTail
+          else
+             let newGroup = { group: currentGroupType, decls: NonEmptyArray.singleton currentDecl }
+             in NonEmptyArray.cons newGroup accArray
+
+formatSingleGroup
+  :: forall e a b
+   . FormatOptions e a
+  -> (b -> Maybe (ValueBindingFields e)) -- ^ Extractor for VBF
+  -> Format b e a                         -- ^ Original formatter for single items
+  -> DeclarationGroup b                   -- ^ The group to format
+  -> FormatDoc a                          -- ^ The formatted document for the group
+formatSingleGroup conf getValueBindingFields originalFormat { group, decls } =
+  let
+    declsArray = NonEmptyArray.toArray decls
+    defaultFormat = joinWithMap break (originalFormat conf) declsArray
+
+    maybeSpecialFormat = case group of
+      DeclGroupValueSignature _ -> Just $ handleSignatureGroup declsArray
+      DeclGroupValue _ | conf.alignFunctionDefinition -> handleValueOnlyGroup declsArray
+      _ -> Nothing
+
+  in fromMaybe defaultFormat maybeSpecialFormat
+
+  where
+  handleSignatureGroup :: Array b -> FormatDoc a
+  handleSignatureGroup declsArr =
+    case Array.uncons declsArr of
+      Nothing -> mempty
+      Just { head: sigDecl, tail } | Array.null tail ->
+        originalFormat conf sigDecl
+      Just { head: sigDecl, tail: valDecls } ->
+        let
+          formattedSig = originalFormat conf sigDecl
+          formattedVals = formatValueDeclarations valDecls declsArr
+          joinedVals = joinWith break formattedVals
+        in
+          formattedSig `break` (Doc.flatten joinedVals)
+
+  handleValueOnlyGroup :: Array b -> Maybe (FormatDoc a)
+  handleValueOnlyGroup declsArr = do
+    vbfsArray <- traverse getValueBindingFields declsArr
+
+    if Array.length vbfsArray > 1 then do
+      let
+        lhsDocs = map (formatValueLHS conf) vbfsArray
+        maybeMaxWidth = maximum (map calculateWidth lhsDocs)
+        maxWidth = fromMaybe 0 maybeMaxWidth
+        alignedDocs = map (formatValueBindingWithAlignment conf maxWidth) vbfsArray
+      pure $ joinWithMap break identity alignedDocs
+    else
+      Nothing
+
+  formatValueDeclarations :: Array b -> Array b -> Array (FormatDoc a)
+  formatValueDeclarations valDecls originalDeclsArr =
+    if conf.alignFunctionDefinition then
+      case traverse getValueBindingFields valDecls of
+        Just vbfsArray | Array.length originalDeclsArr > 1 ->
+          let
+            lhsDocs = map (formatValueLHS conf) vbfsArray
+            maybeMaxWidth = maximum (map calculateWidth lhsDocs)
+            maxWidth = fromMaybe 0 maybeMaxWidth
+          in
+            map (formatValueBindingWithAlignment conf maxWidth) vbfsArray
+        _ -> map (originalFormat conf) valDecls
+    else
+      map (originalFormat conf) valDecls
+
+determineSeparatorsAndFormat
+  :: forall e a b
+   . FormatOptions e a
+  -> (b -> Maybe (ValueBindingFields e))
+  -> (DeclGroup -> DeclGroup -> DeclGroupSeparator)
+  -> Format b e a
+  -> Array (DeclarationGroup b)
+  -> Array (FormattedDeclarationGroup a)
+determineSeparatorsAndFormat conf getValueBindingFields declSeparator originalFormat groupedDecls =
+  case Array.uncons groupedDecls of
+    Nothing -> []
+    Just { head, tail } ->
+      let
+        firstFormattedDoc = formatSingleGroup conf getValueBindingFields originalFormat head
+        firstFormattedGroup = { sep: DeclGroupSame, doc: firstFormattedDoc }
+
+        folder
+          :: { result :: Array (FormattedDeclarationGroup a), prevGroupType :: DeclGroup }
+          -> DeclarationGroup b
+          -> { result :: Array (FormattedDeclarationGroup a), prevGroupType :: DeclGroup }
+        folder acc currentGroup =
+          let
+            formattedDoc = formatSingleGroup conf getValueBindingFields originalFormat currentGroup
+            sep = declSeparator currentGroup.group acc.prevGroupType
+            formattedGroup = { sep: sep, doc: formattedDoc }
+          in
+            { result: Array.snoc acc.result formattedGroup
+            , prevGroupType: currentGroup.group
+            }
+
+        initialFolderState = { result: [ firstFormattedGroup ], prevGroupType: head.group }
+      in
+        (foldl folder initialFolderState tail).result
+
 formatLetGroups :: forall e a. Format (Array (LetBinding e)) e a
-formatLetGroups = formatDeclGroups letDeclGroupSeparator letGroup formatLetBinding
+formatLetGroups = formatDeclGroups getVbfFromLetBinding letDeclGroupSeparator letGroup formatLetBinding
   where
   letDeclGroupSeparator = case _, _ of
-    _, DeclGroupValueSignature _ -> DeclGroupHard
+    DeclGroupValue n_val, DeclGroupValueSignature n_sig ->
+      if n_val == n_sig then DeclGroupSame
+      else DeclGroupHard
+    DeclGroupValueSignature _, _ -> DeclGroupHard
+    DeclGroupValue n_val1, DeclGroupValue n_val2 ->
+      if n_val1 == n_val2 then DeclGroupSame
+      else DeclGroupSoft
     _, _ -> DeclGroupSame
 
   letGroup = case _ of
@@ -1366,45 +1609,19 @@ formatLetGroups = formatDeclGroups letDeclGroupSeparator letGroup formatLetBindi
     LetBindingPattern _ _ _ -> DeclGroupUnknown
     LetBindingError _ -> DeclGroupUnknown
 
+  getVbfFromLetBinding = case _ of
+    LetBindingName vbf -> Just vbf
+    _ -> Nothing
+
 formatDeclGroups
   :: forall e a b
-   . (DeclGroup -> DeclGroup -> DeclGroupSeparator)
-  -> (b -> DeclGroup)
-  -> Format b e a
-  -> Format (Array b) e a
-formatDeclGroups declSeparator k format conf =
-  maybe mempty joinDecls <<< foldr go Nothing
-  where
-  go decl = Just <<< case _ of
-    Nothing ->
-      { doc: mempty
-      , sep: DeclGroupSame
-      , group: k decl
-      , decls: NonEmptyList.singleton decl
-      }
-    Just acc -> do
-      let group = k decl
-      case declSeparator group acc.group of
-        DeclGroupSame ->
-          { doc: acc.doc
-          , sep: acc.sep
-          , group
-          , decls: NonEmptyList.cons decl acc.decls
-          }
-        sep ->
-          { doc: joinDecls acc
-          , sep
-          , group
-          , decls: NonEmptyList.singleton decl
-          }
-
-  joinDecls acc = case acc.sep of
-    DeclGroupSame ->
-      newDoc `break` acc.doc
-    DeclGroupSoft ->
-      newDoc `flexDoubleBreak` acc.doc
-    DeclGroupHard ->
-      newDoc `break` forceMinSourceBreaks 2 acc.doc
-    where
-    newDoc =
-      joinWithMap break (format conf) acc.decls
+   . (b -> Maybe (ValueBindingFields e)) -- ^ Extractor function
+  -> (DeclGroup -> DeclGroup -> DeclGroupSeparator) -- ^ Separator logic
+  -> (b -> DeclGroup) -- ^ Group identifier
+  -> Format b e a -- ^ Original single item formatter
+  -> Format (Array b) e a -- ^ Formatter for the array
+formatDeclGroups getValueBindingFields declSeparator groupIdentifier originalFormat conf decls =
+  let
+    groupedDecls = groupDeclarations groupIdentifier declSeparator decls
+    formattedGroups = determineSeparatorsAndFormat conf getValueBindingFields declSeparator originalFormat groupedDecls
+  in joinFormattedGroups formattedGroups
