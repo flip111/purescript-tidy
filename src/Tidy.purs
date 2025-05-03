@@ -69,6 +69,7 @@ type FormatOptions e a =
   , operators :: PrecedenceMap
   , importSort :: ImportSortOption
   , importWrap :: ImportWrapOption
+  , compactRecords :: Boolean
   }
 
 defaultFormatOptions :: forall e a. FormatError e => FormatOptions e a
@@ -79,6 +80,7 @@ defaultFormatOptions =
   , operators: Map.empty
   , importSort: ImportSortSource
   , importWrap: ImportWrapSource
+  , compactRecords: false
   }
 
 class FormatError e where
@@ -820,24 +822,38 @@ formatRow openSpace closeSpace conf (Wrapped { open, value: Row { labels, tail }
   Just value, Nothing ->
     formatDelimitedNonEmpty openSpace closeSpace 2 Grouped formatRowLabeled conf (Wrapped { open, value, close })
   Nothing, Just (Tuple bar ty) ->
-    formatToken conf open
-      `openSpace`
-        flatten
-          [ formatToken conf bar
-          , formatType conf ty
-          ]
-      `closeSpace`
-        formatToken conf close
+    let
+      openSp = if conf.compactRecords then space else openSpace
+      closeSp = if conf.compactRecords then space else closeSpace
+    in
+      formatToken conf open
+        `openSp`
+          flatten
+            [ formatToken conf bar
+            , formatType conf ty
+            ]
+        `closeSp`
+          formatToken conf close
   Just (Separated rowLabels), Just (Tuple bar ty) ->
-    formatToken conf open
-      `openSpace`
-        formatListElem 2 formatRowLabeled conf rowLabels.head
-      `softBreak`
-        formatListTail 2 formatRowLabeled conf rowLabels.tail
-      `spaceBreak`
-        (formatToken conf bar `space` formatListElem 2 formatType conf ty)
-      `closeSpace`
-        formatToken conf close
+    let
+      listPart :: FormatDoc a
+      listPart = formatListWithDelimiters openSpace closeSpace 2 Grouped formatRowLabeled conf
+        { open: Nothing
+        , head: rowLabels.head
+        , tail: rowLabels.tail
+        , close: Nothing
+        }
+
+      tailPart :: FormatDoc a
+      tailPart = formatToken conf bar `space` formatListElem (if conf.compactRecords then 0 else 2) formatType conf ty
+
+      openSp = if conf.compactRecords then space else openSpace
+      closeSp = if conf.compactRecords then space else closeSpace
+      sepBreak = if conf.compactRecords then spaceBreak else softBreak
+    in
+      formatToken conf open `openSp`
+        (listPart `sepBreak` tailPart)
+      `closeSp` formatToken conf close
 
 formatRowLabeled :: forall e a. Format (Labeled (Name Label) (Type e)) e a
 formatRowLabeled conf (Labeled { label, separator, value }) =
@@ -1244,21 +1260,92 @@ type FormatList b =
 data FormatGrouped = Grouped | NotGrouped
 
 formatList :: forall e a b. FormatSpace a -> FormatSpace a -> Int -> FormatGrouped -> Format b e a -> Format (FormatList b) e a
-formatList openSpace closeSpace alignment grouped format conf { open, head, tail, close } =
-  case grouped of
-    Grouped ->
-      flexGroup $ formatToken conf open
-        `openSpace` listElems
-    NotGrouped ->
-      formatToken conf open
-        `openSpace` listElems
-  where
-  listElems =
-    formatListElem alignment format conf head
-      `softBreak`
-        formatListTail alignment format conf tail
-      `closeSpace`
-        formatToken conf close
+formatList openSpace closeSpace alignment grouped format conf list@{ open, close } =
+  formatListWithDelimiters openSpace closeSpace alignment grouped format conf
+    list { open = Just open, close = Just close }
+
+type ListDelimiterSpec b =
+  { open :: Maybe SourceToken
+  , head :: b
+  , tail :: Array (Tuple SourceToken b)
+  , close :: Maybe SourceToken
+  }
+
+-- | Internal helper for formatting delimited lists, potentially without outer delimiters.
+-- Used by formatRow and formatList.
+formatListWithDelimiters :: forall e a b. FormatSpace a -> FormatSpace a -> Int -> FormatGrouped -> Format b e a -> Format (ListDelimiterSpec b) e a
+formatListWithDelimiters origOpenSpace origCloseSpace origAlignment grouped format conf { open, head, tail, close } =
+  let
+    fmtOpen = foldMap (formatToken conf) open
+    fmtClose = foldMap (formatToken conf) close
+
+    -- Define the logic for formatting one compact element (b -> FormatDoc a).
+    formatOneCompactElement :: b -> FormatDoc a
+    formatOneCompactElement elem = flexGroup (anchor (format conf elem))
+
+  in
+    if conf.compactRecords then
+      -- Compact Mode: Join head and tail *elements* using Doc.spaceBreak after the comma.
+      let
+        -- Format the head element
+        formattedHead :: FormatDoc a
+        formattedHead = formatOneCompactElement head
+
+        -- The fold function: combines the accumulated doc with the next (comma, element)
+        zipper :: FormatDoc a -> Tuple SourceToken b -> FormatDoc a
+        zipper acc (Tuple commaToken element) =
+          let
+            -- Format the comma token
+            formattedComma :: FormatDoc a
+            formattedComma = formatToken conf commaToken
+
+            -- Format the element compactly
+            formattedElement :: FormatDoc a
+            formattedElement = formatOneCompactElement element
+
+            -- Define the joiner function explicitly
+            joiner :: Doc.FormatDoc a -> Doc.FormatDoc a -> Doc.FormatDoc a
+            joiner = Doc.spaceBreak
+
+            -- How to join: We want `acc <comma> <spaceBreak> element`
+            -- Apply the joiner function: spaceBreak (acc <> comma) element
+          in
+            joiner (acc <> formattedComma) formattedElement
+
+        -- Perform the fold starting with the head
+        elems :: FormatDoc a
+        elems = foldl zipper initial tail
+          where
+          initial = formattedHead -- Start fold with the formatted head
+
+      in
+        case grouped of
+          Grouped ->
+            flexGroup $ fmtOpen <> elems <> fmtClose -- No outer spaces
+          NotGrouped ->
+            fmtOpen `origOpenSpace` elems `origCloseSpace` fmtClose
+    else
+      -- Original Mode: Use softBreak between elements and original outer spacing.
+      let
+        -- Format head using original alignment
+        formattedHead = formatListElem origAlignment format conf head
+
+        -- Re-inline original formatListTail logic for clarity
+        formatListTailOrig :: forall b' e' a'. Int -> Format b' e' a' -> Format (Array (Tuple SourceToken b')) e' a'
+        formatListTailOrig align fmt cfg =
+          Doc.joinWithMap Doc.softBreak \(Tuple a b') ->
+            formatToken cfg a `Doc.space` formatListElem align fmt cfg b'
+
+        formattedTail = formatListTailOrig origAlignment format conf tail
+
+        elems = formattedHead `softBreak` formattedTail -- Original uses softBreak
+
+      in
+        case grouped of
+          Grouped ->
+            flexGroup $ fmtOpen `origOpenSpace` elems `origCloseSpace` fmtClose
+          NotGrouped ->
+            fmtOpen `origOpenSpace` elems `origCloseSpace` fmtClose
 
 formatListElem :: forall e a b. Int -> Format b e a -> Format b e a
 formatListElem alignment format conf b = flexGroup (align alignment (anchor (format conf b)))
