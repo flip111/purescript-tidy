@@ -15,6 +15,11 @@ I'm not responsible if anything happens with your source code. Commit your chang
 
 Individual branches work with a quick test but don't have proper test code.
 
+## Current status (known problems)
+
+* malformed export list (introduced bug) - have to check out which feature branch caused this, or caused during merge
+* missing feature: let-same-line
+
 # ORIGINAL README: purescript-tidy
 
 A syntax tidy-upper (formatter) for PureScript.
