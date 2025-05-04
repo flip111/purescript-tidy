@@ -28,6 +28,7 @@ type FormatOptions =
   , alignFunctionDefinition :: Boolean
   , compactRecords :: Boolean
   , whereClauseSameLine :: Boolean
+  , letClauseSameLine :: Boolean
   }
 
 defaults :: FormatOptions
@@ -44,6 +45,7 @@ defaults =
   , alignFunctionDefinition: false
   , compactRecords: false
   , whereClauseSameLine: false
+  , letClauseSameLine: false
   }
 
 formatOptions :: ArgParser FormatOptions
@@ -116,6 +118,10 @@ formatOptions =
        Arg.flag [ "--where-clause-same-line", "-wcsl" ]
         "Put the function definition directly after \"where\" instead of the next line."
         # Arg.boolean
+    , letClauseSameLine:
+        Arg.flag [ "--let-clause-same-line", "-lcsl" ]
+          "Put source code directly after \"let\" and \"in\" instead of the next line."
+          # Arg.boolean
     }
 
 unicodeOption :: ArgParser UnicodeOption
@@ -148,6 +154,7 @@ fromJson json = do
   alignFunctionDefinition <- obj .:? "alignFunctionDefinition"
   compactRecords <- obj .:? "compactRecords"
   whereClauseSameLine <- obj .:? "whereClauseSameLine"
+  letClauseSameLine <- obj .:? "letClauseSameLine"
   pure
     { importSort: fromMaybe defaults.importSort importSort
     , importWrap: fromMaybe defaults.importWrap importWrap
@@ -161,6 +168,7 @@ fromJson json = do
     , alignFunctionDefinition: fromMaybe defaults.alignFunctionDefinition alignFunctionDefinition
     , compactRecords: fromMaybe defaults.compactRecords compactRecords
     , whereClauseSameLine: fromMaybe defaults.whereClauseSameLine whereClauseSameLine
+    , letClauseSameLine: fromMaybe defaults.letClauseSameLine letClauseSameLine
     }
 
 toJson :: FormatOptions -> Json
@@ -178,6 +186,7 @@ toJson options =
     # extend (assoc "alignFunctionDefinition" options.alignFunctionDefinition)
     # extend (assoc "compactRecords" options.compactRecords)
     # extend (assoc "whereClauseSameLine" (encodeJson options.whereClauseSameLine))
+    # extend (assoc "letClauseSameLine" options.letClauseSameLine)
 
 typeArrowPlacementFromString :: String -> Either JsonDecodeError TypeArrowOption
 typeArrowPlacementFromString = case _ of

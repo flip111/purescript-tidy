@@ -7,6 +7,7 @@ Merge of several branches:
 * align-function-definition
 * compact-records
 * where-same-line
+* let-clause-same-line
 
 The branches individually work. The main branch is an attempt to merge everything.
 
@@ -14,11 +15,6 @@ The branches individually work. The main branch is an attempt to merge everythin
 I'm not responsible if anything happens with your source code. Commit your changes before trying this at least.
 
 Individual branches work with a quick test but don't have proper test code.
-
-## Current status (known problems)
-
-* malformed export list (introduced bug) - have to check out which feature branch caused this, or caused during merge
-* missing feature: let-same-line
 
 # ORIGINAL README: purescript-tidy
 

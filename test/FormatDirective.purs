@@ -118,6 +118,7 @@ parseDirectivesFromModule (Module { header: ModuleHeader header, body }) =
         , alignFunctionDefinition: opts.alignFunctionDefinition
         , compactRecords: opts.compactRecords
         , whereClauseSameLine: opts.whereClauseSameLine
+        , letClauseSameLine: opts.letClauseSameLine
         }
     }
     where

@@ -22,6 +22,7 @@ import Data.Array as Array
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Array.NonEmpty as NonEmptyArray
 import Data.Foldable (foldMap, foldl, foldr, maximum)
+import Data.List.NonEmpty as NonEmptyList
 import Data.Map as Map
 import Data.Maybe (Maybe(..), isJust, fromMaybe)
 import Data.Monoid (power)
@@ -34,15 +35,15 @@ import Data.Tuple (Tuple(..), fst, snd)
 import Dodo as Dodo
 import Partial.Unsafe (unsafeCrashWith)
 import PureScript.CST.Errors (RecoveredError(..))
-import PureScript.CST.Types (AppSpine(..), Binder(..), CaseOf, ClassFundep(..), ClassHead, Comment(..), DataCtor(..), DataHead, DataMembers(..), Declaration(..), Delimited, DelimitedNonEmpty, DoStatement(..), Export(..), Expr(..), FixityOp(..), Foreign(..), Guarded(..), GuardedExpr(..), Ident, IfThenElse, Import(..), ImportDecl(..), Instance(..), InstanceBinding(..), InstanceHead, Label, Labeled(..), LetBinding(..), LineFeed, Module(..), ModuleBody(..), ModuleHeader(..), ModuleName, Name(..), OneOrDelimited(..), Operator, PatternGuard(..), Prefixed(..), Proper, QualifiedName(..), RecordLabeled(..), RecordUpdate(..), Row(..), Separated(..), SourceStyle(..), SourceToken, Token(..), Type(..), TypeVarBinding(..), ValueBindingFields, Where(..), Wrapped(..))
+import PureScript.CST.Types (AppSpine(..), Binder(..), ClassFundep(..), ClassHead, Comment(..), DataCtor(..), DataHead, DataMembers(..), Declaration(..), Delimited, DelimitedNonEmpty, DoStatement(..), Export(..), Expr(..), FixityOp(..), Foreign(..), Guarded(..), GuardedExpr(..), Ident, IfThenElse, Import(..), ImportDecl(..), Instance(..), InstanceBinding(..), InstanceHead, Label, Labeled(..), LetBinding(..), LineFeed, Module(..), ModuleBody(..), ModuleHeader(..), ModuleName, Name(..), OneOrDelimited(..), Operator, PatternGuard(..), Prefixed(..), Proper, QualifiedName(..), RecordLabeled(..), RecordUpdate(..), Row(..), Separated(..), SourceStyle(..), SourceToken, Token(..), Type(..), TypeVarBinding(..), ValueBindingFields, Where(..), Wrapped(..))
+import Tidy.Doc (FormatDoc, align, alignCurrentColumn, anchor, break, flexDoubleBreak, flexGroup, flexSoftBreak, flexSpaceBreak, forceMinSourceBreaks, fromDoc, indent, joinWith, joinWithMap, leadingBlockComment, leadingLineComment, locally, softBreak, softSpace, sourceBreak, space, spaceBreak, text, trailingBlockComment, trailingLineComment)
 import Tidy.Doc (FormatDoc, toDoc) as Exports
-import Tidy.Doc (FormatDoc(..), align, alignCurrentColumn, anchor, break, flexDoubleBreak, flexGroup, flexSoftBreak, flexSpaceBreak, forceMinSourceBreaks, fromDoc, indent, joinWith, joinWithMap, leadingBlockComment, leadingLineComment, locally, softBreak, softSpace, sourceBreak, space, spaceBreak, text, trailingBlockComment, trailingLineComment)
 import Tidy.Doc as Doc
 import Tidy.Hang (HangingDoc, HangingOp(..), hang, hangApp, hangBreak, hangOps, hangWithIndent)
 import Tidy.Hang as Hang
 import Tidy.Precedence (OperatorNamespace(..), OperatorTree(..), PrecedenceMap, QualifiedOperator(..), toOperatorTree)
-import Tidy.Token (UnicodeOption(..), printToken)
 import Tidy.Token (UnicodeOption(..)) as Exports
+import Tidy.Token (UnicodeOption(..), printToken)
 import Tidy.Util (nameOf, overLabel, splitLines, splitStringEscapeLines)
 
 data TypeArrowOption
@@ -74,6 +75,7 @@ type FormatOptions e a =
   , alignFunctionDefinition :: Boolean
   , compactRecords :: Boolean
   , whereClauseSameLine :: Boolean
+  , letClauseSameLine :: Boolean
   }
 
 defaultFormatOptions :: forall e a. FormatError e => FormatOptions e a
@@ -88,6 +90,7 @@ defaultFormatOptions =
   , alignFunctionDefinition: false
   , compactRecords: false
   , whereClauseSameLine: false
+  , letClauseSameLine: false
   }
 
 class FormatError e where
@@ -963,11 +966,7 @@ formatHangingExpr conf = case _ of
     formatCase conf caseOf
 
   ExprLet letIn ->
-    hangBreak $ formatToken conf letIn.keyword
-      `spaceBreak`
-        indent (formatLetGroups conf (NonEmptyArray.toArray letIn.bindings))
-      `spaceBreak`
-        (formatToken conf letIn.in `spaceBreak` indent (flexGroup (formatExpr conf letIn.body)))
+    hangBreak (formatExprLet conf letIn)
 
   ExprDo doBlock ->
     hang
@@ -1230,10 +1229,37 @@ formatPatternGuard conf (PatternGuard { binder, expr }) = case binder of
 
 formatWhere :: forall e a. Format (Tuple SourceToken (NonEmptyArray (LetBinding e))) e a
 formatWhere conf (Tuple kw bindings) =
-  if conf.whereClauseSameLine then
-    formatToken conf kw `space` (alignCurrentColumn $ formatLetGroups conf (NonEmptyArray.toArray bindings))
+  formatToken conf kw
+    `break` formatLetGroups conf (NonEmptyArray.toArray bindings)
+
+formatExprLet :: forall e a. FormatOptions e a -> LetIn e -> FormatDoc a -- Return FormatDoc
+formatExprLet conf letIn =
+  if conf.letClauseSameLine then
+    let
+      letKeywordString = printToken conf.unicode letIn.keyword.value
+      inKeywordString = printToken conf.unicode letIn.in.value
+    in
+      Doc.fromDoc
+        (
+          ( Dodo.text letKeywordString <> Dodo.space <>
+              (Doc.toDoc (formatLetGroups conf (NonEmptyArray.toArray letIn.bindings))) -- Inlined bindingsDoc -> dodoBindingsDoc
+          )
+          `Dodo.appendBreak`
+          ( Dodo.text inKeywordString <> Dodo.space <> Dodo.space <>
+              (Doc.toDoc (formatExpr conf letIn.body))
+          )
+        )
   else
-    formatToken conf kw `break` (formatLetGroups conf (NonEmptyArray.toArray bindings))
+    Hang.toFormatDoc (hangBreak (
+        formatToken conf letIn.keyword
+        `spaceBreak`
+          indent (formatLetGroups conf (NonEmptyArray.toArray letIn.bindings))
+        `spaceBreak`
+          ( formatToken conf letIn.in
+              `spaceBreak`
+                indent (flexGroup (formatExpr conf letIn.body))
+          )
+      ))
 
 formatLetBinding :: forall e a. Format (LetBinding e) e a
 formatLetBinding conf = case _ of
@@ -1247,7 +1273,6 @@ formatLetBinding conf = case _ of
         Hang.toFormatDoc (indent (anchor (formatToken conf tok)) `hang` formatHangingExpr conf expr)
       `break`
         indent (foldMap (formatWhere conf) bindings)
-
   LetBindingError e ->
     conf.formatError e
 
@@ -1815,7 +1840,6 @@ formatLetGroups = formatDeclGroups getVbfFromLetBinding letDeclGroupSeparator le
   getVbfFromLetBinding = case _ of
     LetBindingName vbf -> Just vbf
     _ -> Nothing
-
 
 formatDeclGroups
   :: forall e a b
