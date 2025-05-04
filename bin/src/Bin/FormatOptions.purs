@@ -96,7 +96,7 @@ formatOptions =
           # Arg.optional
     , whereClauseSameLine:
        Arg.flag [ "--where-clause-same-line", "-wcsl" ]
-        "Put the function definition directly after \"where\" instead of the next line."
+        "Put source code directly after \"where\" instead of the next line."
         # Arg.boolean
     }
 
