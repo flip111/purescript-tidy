@@ -33,7 +33,7 @@ import Data.Tuple (Tuple(..), fst, snd)
 import Dodo as Dodo
 import Partial.Unsafe (unsafeCrashWith)
 import PureScript.CST.Errors (RecoveredError(..))
-import PureScript.CST.Types (AppSpine(..), Binder(..), ClassFundep(..), ClassHead, Comment(..), DataCtor(..), DataHead, DataMembers(..), Declaration(..), Delimited, DelimitedNonEmpty, DoStatement(..), Export(..), Expr(..), FixityOp(..), Foreign(..), Guarded(..), GuardedExpr(..), Ident, IfThenElse, Import(..), ImportDecl(..), Instance(..), InstanceBinding(..), InstanceHead, Label, Labeled(..), LetBinding(..), LineFeed, Module(..), ModuleBody(..), ModuleHeader(..), ModuleName, Name(..), OneOrDelimited(..), Operator, PatternGuard(..), Prefixed(..), Proper, QualifiedName(..), RecordLabeled(..), RecordUpdate(..), Row(..), Separated(..), SourceStyle(..), SourceToken, Token(..), Type(..), TypeVarBinding(..), ValueBindingFields, Where(..), Wrapped(..))
+import PureScript.CST.Types (AppSpine(..), Binder(..), ClassFundep(..), ClassHead, Comment(..), DataCtor(..), DataHead, DataMembers(..), Declaration(..), Delimited, DelimitedNonEmpty, DoStatement(..), Export(..), Expr(..), FixityOp(..), Foreign(..), Guarded(..), GuardedExpr(..), Ident, IfThenElse, Import(..), ImportDecl(..), Instance(..), InstanceBinding(..), InstanceHead, Label, Labeled(..), LetBinding(..), LetIn, LineFeed, Module(..), ModuleBody(..), ModuleHeader(..), ModuleName, Name(..), OneOrDelimited(..), Operator, PatternGuard(..), Prefixed(..), Proper, QualifiedName(..), RecordLabeled(..), RecordUpdate(..), Row(..), Separated(..), SourceStyle(..), SourceToken, Token(..), Type(..), TypeVarBinding(..), ValueBindingFields, Where(..), Wrapped(..))
 import Tidy.Doc (FormatDoc, align, alignCurrentColumn, anchor, break, flexDoubleBreak, flexGroup, flexSoftBreak, flexSpaceBreak, forceMinSourceBreaks, fromDoc, indent, joinWith, joinWithMap, leadingBlockComment, leadingLineComment, locally, softBreak, softSpace, sourceBreak, space, spaceBreak, text, trailingBlockComment, trailingLineComment)
 import Tidy.Doc (FormatDoc, toDoc) as Exports
 import Tidy.Doc as Doc
@@ -69,6 +69,7 @@ type FormatOptions e a =
   , operators :: PrecedenceMap
   , importSort :: ImportSortOption
   , importWrap :: ImportWrapOption
+  , letClauseSameLine :: Boolean
   }
 
 defaultFormatOptions :: forall e a. FormatError e => FormatOptions e a
@@ -79,6 +80,7 @@ defaultFormatOptions =
   , operators: Map.empty
   , importSort: ImportSortSource
   , importWrap: ImportWrapSource
+  , letClauseSameLine: false
   }
 
 class FormatError e where
@@ -939,11 +941,7 @@ formatHangingExpr conf = case _ of
         tail
 
   ExprLet letIn ->
-    hangBreak $ formatToken conf letIn.keyword
-      `spaceBreak`
-        indent (formatLetGroups conf (NonEmptyArray.toArray letIn.bindings))
-      `spaceBreak`
-        (formatToken conf letIn.in `spaceBreak` indent (flexGroup (formatExpr conf letIn.body)))
+    hangBreak (formatExprLet conf letIn)
 
   ExprDo doBlock ->
     hang
@@ -1076,6 +1074,35 @@ formatWhere conf (Tuple kw bindings) =
   formatToken conf kw
     `break` formatLetGroups conf (NonEmptyArray.toArray bindings)
 
+formatExprLet :: forall e a. FormatOptions e a -> LetIn e -> FormatDoc a -- Return FormatDoc
+formatExprLet conf letIn =
+  if conf.letClauseSameLine then
+    let
+      letKeywordString = printToken conf.unicode letIn.keyword.value
+      inKeywordString = printToken conf.unicode letIn.in.value
+    in
+      Doc.fromDoc
+        (
+          ( Dodo.text letKeywordString <> Dodo.space <>
+              (Doc.toDoc (formatLetGroups conf (NonEmptyArray.toArray letIn.bindings))) -- Inlined bindingsDoc -> dodoBindingsDoc
+          )
+          `Dodo.appendBreak`
+          ( Dodo.text inKeywordString <> Dodo.space <> Dodo.space <>
+              (Doc.toDoc (formatExpr conf letIn.body))
+          )
+        )
+  else
+    Hang.toFormatDoc (hangBreak (
+        formatToken conf letIn.keyword
+        `spaceBreak`
+          indent (formatLetGroups conf (NonEmptyArray.toArray letIn.bindings))
+        `spaceBreak`
+          ( formatToken conf letIn.in
+              `spaceBreak`
+                indent (flexGroup (formatExpr conf letIn.body))
+          )
+      ))
+
 formatLetBinding :: forall e a. Format (LetBinding e) e a
 formatLetBinding conf = case _ of
   LetBindingSignature (Labeled lbl) ->
@@ -1088,7 +1115,6 @@ formatLetBinding conf = case _ of
         Hang.toFormatDoc (indent (anchor (formatToken conf tok)) `hang` formatHangingExpr conf expr)
       `break`
         indent (foldMap (formatWhere conf) bindings)
-
   LetBindingError e ->
     conf.formatError e
 
