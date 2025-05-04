@@ -16,6 +16,46 @@ I'm not responsible if anything happens with your source code. Commit your chang
 
 Individual branches work with a quick test but don't have proper test code.
 
+## Status main branch
+
+The main branch doesn't work like it should with all these functions together. What needs to be done is this:
+1. Add test cases for individual features (in their own branch) and at the same time check if it doesn't mess up other formatting
+2. Re-do branch merging more carefully after each merge tests should be updated again and check out to work
+
+At the moment each branch touches more or less these parts of the code:
+
+* align-function-definition
+  - handleTrailingComment
+  - formatTopLevelGroups
+  - calculateWidth
+  - formatValueLHS
+  - formatPatternGuards
+  - formatAGuardedExpr
+  - formatValueBindingWithAlignment
+  - joinFormattedGroups
+  - groupDeclarations
+  - formatSingleGroup
+  - determineSeparatorsAndFormat
+  - formatLetGroups
+  - formatDeclGroups
+* align-case-arrows
+  - ExprCase caseOf
+  - formatCase
+  - formatCaseBinders
+  - formatPatternGuards
+  - formatNonAligningCaseBranch
+  - formatGuardedExpr
+* compact-records
+  - formatRow
+  - formatList
+  - formatListWithDelimiters
+* let-clause-same-line
+  - formatExprLet
+* where-same-line
+  - formatWhere
+
+Best would be to try to merge them in this order based on main-upstream because merging the features that touch less code will be easier than the other way around probably.
+
 # ORIGINAL README: purescript-tidy
 
 A syntax tidy-upper (formatter) for PureScript.
