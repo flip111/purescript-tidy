@@ -1421,74 +1421,65 @@ formatListWithDelimiters origOpenSpace origCloseSpace origAlignment grouped form
   let
     fmtOpen = foldMap (formatToken conf) open
     fmtClose = foldMap (formatToken conf) close
-
-    -- Define the logic for formatting one compact element (b -> FormatDoc a).
-    formatOneCompactElement :: b -> FormatDoc a
-    formatOneCompactElement elem = flexGroup (anchor (format conf elem))
-
   in
     if conf.compactRecords then
-      -- Compact Mode: Join head and tail *elements* using Doc.spaceBreak after the comma.
+      -- Compact Mode is ON: Differentiate based on 'grouped'
       let
-        -- Format the head element
-        formattedHead :: FormatDoc a
+        formatOneCompactElement :: b -> Doc.FormatDoc a
+        formatOneCompactElement elem = flexGroup (anchor (format conf elem))
+
         formattedHead = formatOneCompactElement head
-
-        -- The fold function: combines the accumulated doc with the next (comma, element)
-        zipper :: FormatDoc a -> Tuple SourceToken b -> FormatDoc a
-        zipper acc (Tuple commaToken element) =
-          let
-            -- Format the comma token
-            formattedComma :: FormatDoc a
-            formattedComma = formatToken conf commaToken
-
-            -- Format the element compactly
-            formattedElement :: FormatDoc a
-            formattedElement = formatOneCompactElement element
-
-            -- Define the joiner function explicitly
-            joiner :: Doc.FormatDoc a -> Doc.FormatDoc a -> Doc.FormatDoc a
-            joiner = Doc.spaceBreak
-
-            -- How to join: We want `acc <comma> <spaceBreak> element`
-            -- Apply the joiner function: spaceBreak (acc <> comma) element
-          in
-            joiner (acc <> formattedComma) formattedElement
-
-        -- Perform the fold starting with the head
-        elems :: FormatDoc a
-        elems = foldl zipper initial tail
-          where
-          initial = formattedHead -- Start fold with the formatted head
-
       in
         case grouped of
-          Grouped ->
-            flexGroup $ fmtOpen <> elems <> fmtClose -- No outer spaces
           NotGrouped ->
-            fmtOpen `origOpenSpace` elems `origCloseSpace` fmtClose
+            -- Compact Mode + NotGrouped (Exports, Paren Lists, etc.)
+            -- Use compact *elements*, but original joining structure and outer spacing.
+            let
+              -- formatTailEntryParenCompact now uses the outer formatOneCompactElement
+              formatTailEntryParenCompact :: Tuple SourceToken b -> Doc.FormatDoc a
+              formatTailEntryParenCompact (Tuple commaToken element) =
+                formatToken conf commaToken `Doc.space` formatOneCompactElement element
+
+              formattedTail = Doc.joinWithMap Doc.softBreak formatTailEntryParenCompact tail
+              elems = formattedHead `Doc.softBreak` formattedTail
+            in
+              fmtOpen `origOpenSpace` elems `origCloseSpace` fmtClose
+
+          Grouped ->
+            -- Compact Mode + Grouped (Records, Arrays, Rows)
+            -- Use compact elements, comma <spaceBreak> joining, and no outer spacing.
+            let
+              zipper :: Doc.FormatDoc a -> Tuple SourceToken b -> Doc.FormatDoc a
+              zipper acc (Tuple commaToken element) =
+                let
+                  formattedComma = formatToken conf commaToken
+                  formattedElement = formatOneCompactElement element
+                  joiner = Doc.spaceBreak
+                in
+                  joiner (acc <> formattedComma) formattedElement
+
+              elems = foldl zipper formattedHead tail
+            in
+              flexGroup (fmtOpen <> elems <> fmtClose)
     else
-      -- Original Mode: Use softBreak between elements and original outer spacing.
+      -- Compact Mode is OFF - Use Original Path Logic entirely
       let
-        -- Format head using original alignment
-        formattedHead = formatListElem origAlignment format conf head
+        formatOneOriginalElement :: b -> Doc.FormatDoc a
+        formatOneOriginalElement elem = formatListElem origAlignment format conf elem
 
-        -- Re-inline original formatListTail logic for clarity
-        formatListTailOrig :: forall b' e' a'. Int -> Format b' e' a' -> Format (Array (Tuple SourceToken b')) e' a'
-        formatListTailOrig align fmt cfg =
-          Doc.joinWithMap Doc.softBreak \(Tuple a b') ->
-            formatToken cfg a `Doc.space` formatListElem align fmt cfg b'
+        formatTailEntryOrig :: Tuple SourceToken b -> Doc.FormatDoc a
+        formatTailEntryOrig (Tuple commaToken element) =
+          formatToken conf commaToken `Doc.space` formatOneOriginalElement element
 
-        formattedTail = formatListTailOrig origAlignment format conf tail
+        formattedTail = Doc.joinWithMap Doc.softBreak formatTailEntryOrig tail
 
-        elems = formattedHead `softBreak` formattedTail -- Original uses softBreak
+        elems = (formatOneOriginalElement head) `Doc.softBreak` formattedTail
 
+        combined = fmtOpen `origOpenSpace` elems `origCloseSpace` fmtClose
       in
         case grouped of
-          Grouped ->
-            flexGroup $ fmtOpen `origOpenSpace` elems `origCloseSpace` fmtClose
-          NotGrouped ->
-            fmtOpen `origOpenSpace` elems `origCloseSpace` fmtClose
+          Grouped    -> flexGroup combined
+          NotGrouped -> combined
 
 formatListElem :: forall e a b. Int -> Format b e a -> Format b e a
 formatListElem alignment format conf b = flexGroup (align alignment (anchor (format conf b)))
